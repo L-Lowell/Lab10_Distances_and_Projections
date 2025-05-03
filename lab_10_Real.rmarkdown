@@ -1,0 +1,453 @@
+---
+title: "Lab 02: Distances and the Border Zone"
+subtitle: 'Ecosystem Science and Sustainability 523c'
+author:
+  - name: Lance Lowell
+    email: Mardyjr4@colostate.edu
+format: html
+---
+
+```{r}
+library(remotes)
+
+remotes::install_github("ropensci/USAboundaries")
+remotes::install_github("ropensci/USAboundariesData")
+
+remotes::install_github("ropenscilabs/rnaturalearthdata")
+```
+
+```{r}
+# spatial data science
+library(tidyverse)
+library(sf)
+library(units)
+
+# Data
+library(AOI)
+
+# Visualization
+library(gghighlight)
+library(ggrepel)
+library(knitr)
+```
+
+```{r}
+#1.1 Define a Projection
+eqdc <- '+proj=eqdc +lat_0=40 +lon_0=-96 +lat_1=20 +lat_2=60 +x_0=0 +y_0=0 +datum=NAD83 +units=m +no_defs'
+```
+
+```{r}
+#1.2 - Get USA state boundaries
+remotes::install_github("mikejohnson51/AOI")
+```
+
+```{r}
+#1.3 - Get country boundaries for Mexico, the United States of America, and Canada
+boundaries <- aoi_get(country = c("MX", "CA", "USA"))
+
+#Make sure the data is in a projected coordinate system suitable for distance measurements at the national scale (eqdc).
+
+eqdc_cord <- st_transform(boundaries, crs = eqdc)
+```
+
+```{r}
+#1.4 - Get city locations from the CSV file
+
+#Once downloaded, read it into your working session using readr::read_csv() and explore the dataset until you are comfortable with the information it contains.
+uscities <- read_csv("data/uscities.csv")
+glimpse(uscities)
+```
+
+
+
+This confirms the accuracy of the dataset and that it contains information necessary for transformation to a spatial analysis.
+
+
+
+
+```{r}
+#remove hawaii alaska puerto rico, from the USA boundaris_states
+
+uscities_above40 <- uscities%>%
+  filter(!state_id %in% c("HI", "AK", "PR"))
+
+```
+
+```{r}
+#While this data has everything we want, it is not yet spatial. Convert the data.frame to a spatial object using st_as_sf
+
+uscities_sf <- st_as_sf(uscities_above40, 
+                        coords = c("lng", "lat"), 
+                        crs = 4326)
+```
+
+```{r}
+uscities_proj <- st_transform(uscities_sf, crs = eqdc)
+```
+
+```{r}
+#2.1 - Distance to USA Border (coastline or national) (km)
+
+
+#Convert the USA state boundaries to a MULTILINESTRING geometry in which the state boundaries are resolved.
+usa_border_resolved <- st_union(eqdc_cord) |>
+  st_cast("MULTILINESTRING")
+
+# Store this distance data as part of the cities data.frame
+uscities_proj$dist_to_border_km <- as.numeric(
+  set_units(
+    st_distance(uscities_proj, usa_border_resolved),
+    "km"
+  )
+)
+
+# Produce a table (flextable) of 5 cities farthest from national border
+library(flextable)
+
+uscities_proj %>%
+  st_drop_geometry() %>%
+  select(city, state_name, dist_to_border_km) %>%
+  arrange(desc(dist_to_border_km)) %>%
+  slice(1:5) %>%
+  flextable()
+
+
+```
+
+
+
+This flextable shows the five U.S. cities farthest from any national (coastline or international) border are all located in South Dakota, with distances exceeding 1,600 km.
+
+
+
+
+```{r}
+#2.2 - Distance to States (km)
+
+#onvert the USA state boundaries to a MULTILINESTRING geometry in which the state boundaries are preserved (not resolved).
+
+usa_states <- boundaries %>%
+  filter(admin == "United States of America") %>%
+  st_transform(crs = eqdc)
+
+usa_state_borders <- st_cast(usa_states, "MULTILINESTRING")
+
+uscities_proj$dist_to_state_km <- as.numeric(
+  set_units(
+    st_distance(uscities_proj, usa_state_borders),
+    "km"
+  )
+)
+
+#produce a table (flextable) documenting the five cities farthest from a state border. Include only the city name, state, and distance.
+
+uscities_proj %>%
+  st_drop_geometry() %>%
+  select(city, state_name, dist_to_state_km) %>%
+  arrange(desc(dist_to_state_km)) %>%
+  slice(1:5) %>%
+  flextable()
+
+```
+
+
+
+This table shows the cities farthest from state borders. Interestingly, the cities listed are in Kansas.
+
+
+
+```{r}
+#2.3 - Distance to Mexico (km)
+
+#isolate Mexico from the country objects
+
+mexico <- boundaries %>%
+  filter(iso_a2 == "MX") %>%
+  st_transform(crs = eqdc)
+
+mexico_border <- st_cast(mexico, "MULTILINESTRING")
+
+uscities_proj$dist_to_mexico_km <- as.numeric(
+  set_units(
+    st_distance(uscities_proj, mexico_border),
+    "km"
+  )
+)
+
+
+#produce a table (flextable) documenting the five cities farthest from a state border. Include only the city name, state, and distance.
+
+uscities_proj %>%
+  st_drop_geometry() %>%
+  select(city, state_name, dist_to_mexico_km) %>%
+  arrange(desc(dist_to_mexico_km)) %>%
+  slice(1:5) %>%
+  flextable()
+
+
+```
+
+
+
+This table displays the cities in the U.S. farthest from the Mexican border, with all top results located in Maine. This makes sense geographically, as northern Maine is about as far from the southern border as one can get within the continental U.S.
+
+
+
+```{r}
+#2.4 - Distance to Canada (km)
+
+#isolate Canida from the country objects
+
+canada <- boundaries %>%
+  filter(iso_a2 == "CA") %>%
+  st_transform(crs = eqdc)
+
+canada_border <- st_cast(canada, "MULTILINESTRING")
+
+uscities_proj$dist_to_canada_km <- as.numeric(
+  set_units(
+    st_distance(uscities_proj, canada_border),
+    "km"
+  )
+)
+
+#produce a table (flextable) documenting the five cities farthest from a state border. Include only the city name, state, and distance.
+
+uscities_proj %>%
+  st_drop_geometry() %>%
+  select(city, state_name, dist_to_canada_km) %>%
+  arrange(desc(dist_to_canada_km)) %>%
+  slice(1:5) %>%
+  flextable()
+
+```
+
+
+
+Here, cities in southern Texas are shown to be the farthest from the Canadian border, with distances around 2,200 km. 
+
+
+
+
+
+```{r}
+#3.1 DataShow the 3 continents, CONUS outline, state boundaries, 
+conus_states <- usa_states %>%
+  filter(!postal %in% c("AK", "HI", "PR"))
+conus_outline <- st_union(conus_states)
+#and 10 largest USA cities (by population) on a single map
+top10_cities <- uscities_proj %>%
+  arrange(desc(population)) %>%
+  slice(1:10)
+# Plot everything
+ggplot() +
+  geom_sf(data = eqdc_cord, fill = "navy", lty = "solid") +
+  geom_sf(data = conus_outline, fill = NA, color = "tan", size = 1, lty = "dashed") +
+  geom_sf(data = conus_states, fill = NA, color = "grey", size = 0.3, lty = "dotted") +
+  geom_sf(data = top10_cities, color = "deeppink", size = 2) +
+  geom_label_repel(
+    data = top10_cities,
+    aes(label = city, geometry = geometry),
+    stat = "sf_coordinates",
+    min.segment.length = 0,
+    size = 3,
+    box.padding = 0.3,
+    label.size = 0.2,
+    seed = 123
+  ) +
+  labs(title = "Top 10 Largest U.S. Cities with CONUS and Country Boundaries") +
+  theme_minimal()
+```
+
+
+
+This map displays the contiguous United States, Canada, and Mexico boundaries, with an overlay of the top 10 most populous U.S. cities.  Most of the cities are either on the boarder and either on one of the great lakes or the ocean, 
+
+
+
+```{r}
+#3.2 City Distance from the Border
+
+#Create a map that colors USA cities by their distance from the national border. In addition, re-draw and label the 5 cities that are farthest from the border.
+
+#  cities farthest from the national border
+farthest_cities <- uscities_proj %>%
+  arrange(desc(dist_to_border_km)) %>%
+  slice(1:5)
+#plot
+ggplot() +
+  geom_sf(data = uscities_proj, aes(color = dist_to_border_km), size = 1, alpha = 0.7) +
+  geom_sf(data = farthest_cities, color = "deeppink", fill = "deeppink", shape = 21, size = 3, stroke = 1) +
+#lables
+  geom_label_repel(data = farthest_cities,
+                   aes(label = city, geometry = geometry),
+                   stat = "sf_coordinates",
+                   size = 3,
+                   box.padding = 0.3,
+                   label.size = 0.2,
+                   seed = 42) +
+  # map theme
+  labs(
+    title = "U.S. City Distance from the Border",
+    color = "Distance (km)"
+  ) +
+  theme_dark()
+```
+
+
+
+All of these are in South Dakota,far from both coastlines and international borders.
+
+
+
+```{r}
+#3.3 City Distance from Nearest State
+#Create a map that colors USA cities by their distance from the nearest state border. In addition, re-draw and label the 5 cities that are farthest from any border.
+#5 cities farthest from any state border
+farthest_state_cities <- uscities_proj %>%
+  arrange(desc(dist_to_state_km)) %>%
+  slice(1:5)
+# Step 2: Create the map
+ggplot() +
+  # Base layer: all cities colored by distance to nearest state border
+  geom_sf(data = uscities_proj, aes(color = dist_to_state_km), size = 1, alpha = 0.7) +
+  
+  # Highlight the 5 farthest cities with shape = 21 (circle with border)
+  geom_sf(data = farthest_state_cities, color = "deeppink", fill = "deeppink", shape = 21, size = 3, stroke = 1) +
+  
+  # Label the farthest cities
+  geom_label_repel(data = farthest_state_cities,
+                   aes(label = city, geometry = geometry),
+                   stat = "sf_coordinates",
+                   size = 3,
+                   box.padding = 0.3,
+                   label.size = 0.2,
+                   seed = 123) +
+  
+  # Legend and title
+  labs(
+    title = "U.S. Cities Colored by Distance to Nearest State Border",
+    color = "Distance (km)"
+  ) +
+  theme_minimal()
+```
+
+
+All of these seem to be in the same very large state.  This one is very surprising to me considering it isn't in a larger state like Texas.
+
+
+
+```{r}
+#3.4 Equidistance boundary from Mexico and Canada
+#Here we provide a little more challenge. Use gghighlight to identify the cities that are equal distance from the Canadian AND Mexican border 100 km.
+uscities_proj <- uscities_proj %>%
+  mutate(diff_can_mex = abs(dist_to_canada_km - dist_to_mexico_km))
+
+equidistant_cities <- uscities_proj %>%
+  filter(diff_can_mex <= 100)
+
+top5_equidistant <- equidistant_cities %>%
+  arrange(desc(population)) %>%
+  slice(1:5)
+ggplot(uscities_proj) +
+  geom_sf(aes(color = diff_can_mex), size = 1, alpha = 0.6) +
+  
+  gghighlight(diff_can_mex <= 100, label_key = city) +
+
+  #In addition, label the five (5) most populous cites in this zone.
+  geom_label_repel(data = top5_equidistant,
+                   aes(label = city, geometry = geometry),
+                   stat = "sf_coordinates",
+                   size = 3,
+                   box.padding = 0.3,
+                   label.size = 0.2,
+                   seed = 42) +
+  theme_minimal()
+```
+
+
+These cities fall roughly along a central horizontal band across the U.S. This makes sense because they lie equally far from the northern and southern international borders.  Fort Collins is in this zone which is interesting to find
+
+
+
+```{r}
+#4.1 Quantifing Border Zone
+#How many cities are in this 100 mile zone? (100 miles ~ 160 kilometers)
+uscities_proj <- uscities_proj %>%
+  mutate(border_zone = dist_to_border_km <= 160)
+
+num_cities_in_zone <- uscities_proj %>%
+  filter(border_zone) %>%
+  nrow()
+#How many people live in a city within 100 miles of the border?
+pop_in_zone <- uscities_proj %>%
+  filter(border_zone) %>%
+  summarise(pop_border_zone = sum(population, na.rm = TRUE)) %>%
+  pull(pop_border_zone)
+total_pop <- uscities_proj %>%
+  summarise(total_pop = sum(population, na.rm = TRUE)) %>%
+  pull(total_pop)
+#What percentage of the total population is in this zone?
+percent_in_zone <- round((pop_in_zone / total_pop) * 100, 2)
+#Does it match the ACLU estimate in the link above?
+aclu_estimate <- 66
+match_aclu <- ifelse(abs(percent_in_zone - aclu_estimate) <= 2, "Yes", "No")
+```
+
+```{r}
+#Report this information as a table.
+tibble(
+  `Number of Cities in Border Zone` = num_cities_in_zone,
+  `Population in Border Zone` = pop_in_zone,
+  `Total Population` = total_pop,
+  `Percent of Population in Zone (%)` = percent_in_zone,
+  `ACLU Estimate (%)` = aclu_estimate,
+  `Matches ACLU Estimate?` = match_aclu
+) %>%
+  flextable() %>%
+  autofit()
+```
+
+
+This analysis shows that over 8,000 U.S. cities are within 100 miles of a national border, home to around 206 million people—or about 52% of the total population. That’s a bit lower than the ACLU’s estimate of 66%, likely because their number includes all people while ours focused just on cities. A huge part of the U.S. population lives in this zone, which highlights how many people are affected by border-related rules and policies.
+
+
+
+```{r}
+#4.2 Mapping Border Zone
+
+#Make a map highlighting the cites within the 100 mile zone using gghighlight.
+
+danger_zone_cities <- uscities_proj %>%
+  filter(dist_to_border_km <= 160) #(100 miles ~ 160 kilometers)
+
+top10_danger_zone <- danger_zone_cities %>%
+  arrange(desc(population)) %>%
+  slice(1:10)
+
+
+#Use a color gradient from ‘orange’ to ‘darkred’. Label the 10 most populous cities in the Danger Zone
+
+ggplot() +
+  geom_sf(data = uscities_proj, color = "grey80", size = 0.5, alpha = 0.3) +
+  geom_sf(data = danger_zone_cities, aes(color = dist_to_border_km), size = 1) +
+  scale_color_gradient(low = "orange", high = "darkred") +
+  geom_label_repel(data = top10_danger_zone,
+                   aes(label = city, geometry = geometry),
+                   stat = "sf_coordinates",
+                   size = 3,
+                   box.padding = 0.3,
+                   label.size = 0.2,
+                   seed = 123) +
+  labs(
+    title = "Cities Within 100 Miles (~160 km) of U.S. Border",
+    color = "Distance to Border (km)"
+  ) +
+  theme_minimal()
+
+
+```
+
+
+
+eattle, San Francisco, San Diego, Los Angeles,Houston, Boston, New York, Philadelphia, Washington, Miami, are the largest cities most closely located to the coastlines.
